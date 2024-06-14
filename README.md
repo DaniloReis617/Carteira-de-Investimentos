@@ -1,4 +1,4 @@
-# Cartteira-de-Investimentos
+# Carteira-de-Investimentos
 Comandos python -m venv venv source venv/bin/activate pip install pandas python-bcb pip install --upgrade pip git status git add . git status git commit -m "primeiros arquivos" git push
 
 Vou explicar o que cada um desses comandos faz:
