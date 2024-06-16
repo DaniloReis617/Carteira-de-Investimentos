@@ -1,11 +1,13 @@
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 import os
 import time
 import glob
+import ta
 
 st.set_page_config(layout="wide")
 
@@ -35,20 +37,35 @@ def calculate_macd(data, short_window, long_window):
 
 @st.cache_data(ttl=3600)  # cache for 1 hour
 def get_stock_data(ticker, period):
-    filename = f'Date/{ticker}.parquet'
+    filename = f'DB/{ticker}.parquet'
     
     if os.path.exists(filename):
-        last_modified = os.path.getmtime(filename)
-        if time.time() - last_modified > 24 * 60 * 60:
-            data = download_data(ticker, period)
-        else:
-            data = pd.read_parquet(filename)
+        data = pd.read_parquet(filename)
+        last_date = data.index[-1]
+        today = pd.Timestamp.now().normalize()
+        if today > last_date:
+            new_data = download_data(ticker, period)
+            if not new_data.empty:
+                data = pd.concat([data, new_data])
+                data.index = pd.to_datetime(data.index)
+                data = data[~data.index.duplicated(keep='first')]
+                data.to_parquet(filename)
     else:
         data = download_data(ticker, period)
+        if not data.empty:
+            data.to_parquet(filename)
 
     return data
 
 def download_data(ticker, period):
+    with st.spinner("Downloading data..."):
+        st.write("Searching for data...")
+        time.sleep(2)
+        st.write("Found URL.")
+        time.sleep(1)
+        st.write("Downloading data...")
+        time.sleep(1)
+
     data = yf.download(ticker, period=period)
     if data.empty:
         return data
@@ -58,7 +75,7 @@ def download_data(ticker, period):
     data['UpperBB'], data['LowerBB'] = calculate_bollinger_bands(data['Close'], 20)
     data['MACD'], data['Signal'] = calculate_macd(data['Close'], 12, 26)
     
-    data.to_parquet(f'Date/{ticker}.parquet')
+    data.to_parquet(f'DB/{ticker}.parquet')
     
     return data
 
@@ -98,6 +115,50 @@ def create_indicators_chart(data_dict):
     fig.update_layout(hovermode='x')
     return fig
 
+def create_candlestick_chart(data, indicators):
+    # Criar figura com subplots
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                        vertical_spacing=0.1, row_heights=[0.7, 0.3])
+
+    # Adicionar candlestick chart ao subplot superior
+    fig.add_trace(go.Candlestick(x=data.index,
+                                 open=data['Open'],
+                                 high=data['High'],
+                                 low=data['Low'],
+                                 close=data['Close'],
+                                 name='Candlestick'), row=1, col=1)
+    
+    # Adicionar indicadores ao subplot inferior, se necessário
+    if 'MA50' in indicators:
+        fig.add_trace(go.Scatter(x=data.index, y=data['MA50'], mode='lines', name='MA50', line=dict(color='blue')), row=1, col=1)
+    
+    if 'MA200' in indicators:
+        fig.add_trace(go.Scatter(x=data.index, y=data['MA200'], mode='lines', name='MA200', line=dict(color='orange')), row=1, col=1)
+    
+    if 'BB' in indicators:
+        fig.add_trace(go.Scatter(x=data.index, y=data['UpperBB'], mode='lines', name='UpperBB', line=dict(color='red')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['LowerBB'], mode='lines', name='LowerBB', line=dict(color='red')), row=1, col=1)
+    
+    # Adicionar RSI ao subplot inferior, se necessário
+    if 'RSI' in indicators:
+        fig.add_trace(go.Scatter(x=data.index, y=data['RSI'], mode='lines', name='RSI', line=dict(color='purple')), row=2, col=1)
+
+    # Atualizar layout da figura
+    fig.update_layout(
+        xaxis_title='Date',
+        yaxis_title='Price (R$)',
+        template='plotly_white'
+    )
+
+    # Atualizar layout do subplot inferior
+    fig.update_layout(
+        xaxis_rangeslider_visible=False,
+        yaxis2_title='RSI',
+        yaxis2_range=[0, 100]
+    )
+
+    return fig
+
 def display_metrics(data):
     if data.shape[0] < 2:
         st.error("Not enough data to display metrics.")
@@ -122,21 +183,20 @@ def display_metrics(data):
         st.metric(label="Movimentação", value=f"{movement:.2f}%", delta_color="inverse" if movement < 0 else "normal")
 
 def combine_parquet_files():
-    # Lista de todos os arquivos Parquet no diretório Date
-    arquivos = glob.glob('Date/*.parquet')
+    # Lista de todos os arquivos Parquet no diretório DB
+    parquet_files = glob.glob('DB/*.parquet')
 
-    # Cria um dataframe vazio para armazenar os dados
-    dados = pd.DataFrame()
+    # Para cada arquivo, ler os dados e combinar em um único DataFrame
+    combined_data = pd.DataFrame()
+    for file in parquet_files:
+        data = pd.read_parquet(file)
+        combined_data = pd.concat([combined_data, data])
 
-    # Lê cada arquivo e concatena no dataframe
-    for arquivo in arquivos:
-        df = pd.read_parquet(arquivo)
-        dados = pd.concat([dados, df])
-
-    # Salva o dataframe combinado em um novo arquivo Parquet
-    dados.to_parquet('Date/dados_combinados.parquet')
+    # Salvar o DataFrame combinado em um único arquivo Parquet
+    combined_data.to_parquet('DB/all_data.parquet')
 
 def main():
+    st.logo("Imagens/dks__3_-removebg-preview.png")
     st.title("Análise de Ações, Criptomoedas e Forex")
     page = st.sidebar.selectbox("Escolha uma página", ["Ações", "Criptomoedas", "Forex"])
 
@@ -150,6 +210,20 @@ def main():
     selected_options = st.sidebar.multiselect("Ações, Criptomoedas ou Pares de Moedas", options)
     time_filter = st.sidebar.selectbox("Período", ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '3y', '4y', '5y'])
 
+    indicators = st.sidebar.multiselect("Indicadores Técnicos", ['MA50', 'MA200', 'BB', 'RSI', 'MACD'])
+
+    col1, col2, col3 = st.columns([2,2, 8])
+
+    with col1:
+        if st.button('Atualizar Dados'):
+            for stock_filter in selected_options:
+                get_stock_data(stock_filter, time_filter)
+            st.write("Dados atualizados com sucesso!")
+
+    with col2:
+        if st.button('Limpar Cache'):
+            st.cache_data.clear()
+
     data_dict = {}
     for stock_filter in selected_options:
         data = get_stock_data(stock_filter, time_filter)
@@ -159,6 +233,11 @@ def main():
             data.index = pd.to_datetime(data.index).strftime("%d/%m/%Y")
             data_dict[stock_filter] = data
             display_metrics(data)
+
+            st.header("Gráfico de Candlestick")
+            with st.container():
+                fig = create_candlestick_chart(data, indicators)
+                st.plotly_chart(fig, use_container_width=True, height=600)
             
             st.header("Gráficos Comparativos")
             with st.container():
@@ -177,8 +256,9 @@ def main():
                 fig = create_indicators_chart(data_dict)
                 st.plotly_chart(fig, use_container_width=True, height=600)
 
-    # Combina todos os arquivos Parquet em um único arquivo
+    # Atualiza os dados no arquivo único Parquet após a análise
     combine_parquet_files()
+
 
 if __name__ == "__main__":
     main()
