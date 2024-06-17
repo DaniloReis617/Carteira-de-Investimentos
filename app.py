@@ -59,12 +59,7 @@ def get_stock_data(ticker, period):
 
 def download_data(ticker, period):
     with st.spinner("Downloading data..."):
-        st.write("Searching for data...")
-        time.sleep(2)
-        st.write("Found URL.")
-        time.sleep(1)
-        st.write("Downloading data...")
-        time.sleep(1)
+        time.sleep(3)
 
     data = yf.download(ticker, period=period)
     if data.empty:
@@ -107,20 +102,11 @@ def create_table(data_dict):
     data = data.style.background_gradient(cmap='Greys')
     return data
 
-def create_indicators_chart(data_dict):
-    fig = go.Figure()
-    for stock_filter, data in data_dict.items():
-        fig.add_trace(go.Scatter(x=data.index, y=data['MA50'], name=f'{stock_filter} MA50', hovertemplate='MA50: %{y}<br>Data: %{x}<extra></extra>'))
-        fig.add_trace(go.Scatter(x=data.index, y=data['MA200'], name=f'{stock_filter} MA200', hovertemplate='MA200: %{y}<br>Data: %{x}<extra></extra>'))
-    fig.update_layout(hovermode='x')
-    return fig
 
 def create_candlestick_chart(data, indicators):
-    # Criar figura com subplots
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                         vertical_spacing=0.1, row_heights=[0.7, 0.3])
 
-    # Adicionar candlestick chart ao subplot superior
     fig.add_trace(go.Candlestick(x=data.index,
                                  open=data['Open'],
                                  high=data['High'],
@@ -128,7 +114,6 @@ def create_candlestick_chart(data, indicators):
                                  close=data['Close'],
                                  name='Candlestick'), row=1, col=1)
     
-    # Adicionar indicadores ao subplot inferior, se necessário
     if 'MA50' in indicators:
         fig.add_trace(go.Scatter(x=data.index, y=data['MA50'], mode='lines', name='MA50', line=dict(color='blue')), row=1, col=1)
     
@@ -139,18 +124,15 @@ def create_candlestick_chart(data, indicators):
         fig.add_trace(go.Scatter(x=data.index, y=data['UpperBB'], mode='lines', name='UpperBB', line=dict(color='red')), row=1, col=1)
         fig.add_trace(go.Scatter(x=data.index, y=data['LowerBB'], mode='lines', name='LowerBB', line=dict(color='red')), row=1, col=1)
     
-    # Adicionar RSI ao subplot inferior, se necessário
     if 'RSI' in indicators:
         fig.add_trace(go.Scatter(x=data.index, y=data['RSI'], mode='lines', name='RSI', line=dict(color='purple')), row=2, col=1)
 
-    # Atualizar layout da figura
     fig.update_layout(
         xaxis_title='Date',
         yaxis_title='Price (R$)',
         template='plotly_white'
     )
 
-    # Atualizar layout do subplot inferior
     fig.update_layout(
         xaxis_rangeslider_visible=False,
         yaxis2_title='RSI',
@@ -183,28 +165,23 @@ def display_metrics(data):
         st.metric(label="Movimentação", value=f"{movement:.2f}%", delta_color="inverse" if movement < 0 else "normal")
 
 def combine_parquet_files():
-    # Lista de todos os arquivos Parquet no diretório DB
     parquet_files = glob.glob('DB/*.parquet')
-
-    # Para cada arquivo, ler os dados e combinar em um único DataFrame
     combined_data = pd.DataFrame()
     for file in parquet_files:
         data = pd.read_parquet(file)
         combined_data = pd.concat([combined_data, data])
-
-    # Salvar o DataFrame combinado em um único arquivo Parquet
     combined_data.to_parquet('DB/all_data.parquet')
 
 def main():
-    st.logo("Imagens/dks__3_-removebg-preview.png")
-    st.title("Análise de Ações, Criptomoedas e Forex")
+    st.sidebar.image("Imagens/dks__3_-removebg-preview.png")
+    st.sidebar.title("Análise de Ações, Criptomoedas e Forex")
     page = st.sidebar.selectbox("Escolha uma página", ["Ações", "Criptomoedas", "Forex"])
 
     if page == "Ações":
         options = ['PETR4.SA', 'BRKM5.SA', 'VALE3.SA', 'ITUB4.SA', 'BBDC4.SA', 'B3SA3.SA', 'BRML3.SA', 'WEGE3.SA', 'SUZB3.SA', 'CSNA3.SA', 'ABEV3.SA', 'BBAS3.SA', 'BRAP4.SA', 'CIEL3.SA', 'CMIG4.SA', 'CPFE3.SA', 'CPLE6.SA', 'CSAN3.SA', 'CYRE3.SA']
     elif page == "Criptomoedas":
         options = ['BTC-USD', 'ETH-USD', 'LTC-USD', 'BCH-USD']
-    else:  # Forex
+    else:
         options = ['EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'USDCAD=X', 'USDCHF=X', 'AUDUSD=X']
 
     selected_options = st.sidebar.multiselect("Ações, Criptomoedas ou Pares de Moedas", options)
@@ -212,14 +189,12 @@ def main():
 
     indicators = st.sidebar.multiselect("Indicadores Técnicos", ['MA50', 'MA200', 'BB', 'RSI', 'MACD'])
 
-    col1, col2, col3 = st.columns([2,2, 8])
-
+    col1, col2 = st.sidebar.columns([1, 1])
     with col1:
         if st.button('Atualizar Dados'):
             for stock_filter in selected_options:
                 get_stock_data(stock_filter, time_filter)
             st.write("Dados atualizados com sucesso!")
-
     with col2:
         if st.button('Limpar Cache'):
             st.cache_data.clear()
@@ -232,33 +207,37 @@ def main():
         else:
             data.index = pd.to_datetime(data.index).strftime("%d/%m/%Y")
             data_dict[stock_filter] = data
+            st.header(f"Ticket escolhido {stock_filter}.")
             display_metrics(data)
 
-            st.header("Gráfico de Candlestick")
-            with st.container():
-                fig = create_candlestick_chart(data, indicators)
-                st.plotly_chart(fig, use_container_width=True, height=600)
-            
-            st.header("Gráficos Comparativos")
-            with st.container():
-                fig = create_charts(data_dict)
-                st.plotly_chart(fig, use_container_width=True, height=600)
+            tab1, tab2, tab3, tab4 = st.tabs(["Candlestick", "Linha", "Volume","Tabela"])
 
-            with st.container():
-                fig = create_volume_chart(data_dict)
-                st.plotly_chart(fig, use_container_width=True, height=600)
+            with tab1:
+                with st.container(border=True):
+                    st.header("Gráfico de Candlestick")
+                    fig = create_candlestick_chart(data, indicators)
+                    st.plotly_chart(fig, use_container_width=True, height=800)
 
-            with st.container():
-                table = create_table(data_dict)
-                st.dataframe(table, use_container_width=True, hide_index=None)
+            with tab2:
+                with st.container(border=True):
+                    st.header("Gráficos de Linha")
+                    fig = create_charts(data_dict)
+                    st.plotly_chart(fig, use_container_width=True, height=800)
 
-            with st.container():
-                fig = create_indicators_chart(data_dict)
-                st.plotly_chart(fig, use_container_width=True, height=600)
+            with tab3:
+                with st.container(border=True):
+                    st.header("Gráficos de Volume")
+                    fig = create_volume_chart(data_dict)
+                    st.plotly_chart(fig, use_container_width=True, height=800)
+ 
+            with tab4:
+                with st.container(border=True):
+                    st.header("Tabela de Dados")
+                    table = create_table(data_dict)
+                    st.dataframe(table, use_container_width=True, hide_index=None)
+                
 
-    # Atualiza os dados no arquivo único Parquet após a análise
     combine_parquet_files()
-
 
 if __name__ == "__main__":
     main()
